@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "crates/lms-domain",
+    "crates/lms-server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+authors = ["SMK Negeri 1 Percut Sei Tuan Engineering"]
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+rust_decimal = { version = "1.36", features = ["serde"] }
+tokio = { version = "1.43", features = ["full"] }
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls-ring", "mysql", "chrono", "json", "rust_decimal"] }
+base64 = "0.22"
+uuid = { version = "1.12", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

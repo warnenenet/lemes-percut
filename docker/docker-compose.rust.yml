@@ -1,0 +1,121 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: smkn1_mysql_rust
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Jakarta
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in docker/.env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lms_smkn1}
+      MYSQL_USER: ${MYSQL_USER:-lms_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in docker/.env}
+    volumes:
+      - ${MYSQL_HOST_PATH:-/var/lib/lms-smkn1/mysql-data}:/var/lib/mysql
+      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u root"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - smkn1_rust_net
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/rust-server/Dockerfile
+    image: smkn1-lms-rust:1.0.0
+    container_name: smkn1_lms_rust_app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Jakarta
+      PORT: 3000
+      APP_MODE: LMS
+      APP_ENV: production
+      AUTO_SEED: ${AUTO_SEED:-false}
+      DATABASE_URL: mysql://${MYSQL_USER:-lms_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-lms_smkn1}
+      STORAGE_DIR: /app/storage
+      DIST_DIR: /app/dist
+      BACKUP_DIR: /backup
+      RUST_LOG: lms_server=info,tower_http=info
+    volumes:
+      - ${STORAGE_HOST_PATH:-/var/lib/lms-smkn1/storage}:/app/storage
+      - ${BACKUP_HOST_PATH:-/var/lib/lms-smkn1/backups}:/backup:ro
+    networks:
+      - smkn1_rust_net
+
+  cbt_app:
+    build:
+      context: ..
+      dockerfile: docker/rust-server/Dockerfile
+    image: smkn1-lms-rust:1.0.0
+    container_name: smkn1_cbt_rust_app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Jakarta
+      PORT: 3000
+      APP_MODE: CBT
+      APP_ENV: production
+      AUTO_SEED: "false"
+      DATABASE_URL: mysql://${MYSQL_USER:-lms_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-lms_smkn1}
+      STORAGE_DIR: /app/storage
+      DIST_DIR: /app/dist
+      BACKUP_DIR: /backup
+      RUST_LOG: lms_server=info,tower_http=info
+    volumes:
+      - ${STORAGE_HOST_PATH:-/var/lib/lms-smkn1/storage}:/app/storage
+      - ${BACKUP_HOST_PATH:-/var/lib/lms-smkn1/backups}:/backup:ro
+    networks:
+      - smkn1_rust_net
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: smkn1-nginx:1.0.0
+    container_name: smkn1_rust_nginx
+    restart: unless-stopped
+    depends_on:
+      - app
+      - cbt_app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - smkn1_rust_net
+
+  backup:
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    image: smkn1-backup:1.0.0
+    container_name: smkn1_rust_backup
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Jakarta
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lms_smkn1}
+      MYSQL_USER: ${MYSQL_USER:-lms_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      BACKUP_DIR: /backup
+      RETENTION_DAYS: 7
+    volumes:
+      - ${BACKUP_HOST_PATH:-/var/lib/lms-smkn1/backups}:/backup
+    networks:
+      - smkn1_rust_net
+
+networks:
+  smkn1_rust_net:
+    driver: bridge

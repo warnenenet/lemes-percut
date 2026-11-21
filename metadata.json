@@ -1,0 +1,6 @@
+{
+  "name": "LMS SMK Negeri 1 Percut Sei Tuan",
+  "description": "Learning Management System dual-track K13 & Kurikulum Merdeka untuk SMK Negeri 1 Percut Sei Tuan dengan arsitektur TypeScript strict siap-migrasi ke Rust.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

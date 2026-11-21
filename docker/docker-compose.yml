@@ -1,0 +1,127 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: smkn1_mysql
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Jakarta
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in docker/.env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lms_smkn1}
+      MYSQL_USER: ${MYSQL_USER:-lms_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in docker/.env}
+    volumes:
+      - ${MYSQL_HOST_PATH:-/var/lib/lms-smkn1/mysql-data}:/var/lib/mysql
+      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u root"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - smkn1_net
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/app/Dockerfile
+    image: smkn1-lms-app:1.0.0
+    container_name: smkn1_lms_app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Jakarta
+      NODE_ENV: production
+      PORT: 3000
+      APP_MODE: LMS
+      DATABASE_URL: mysql://${MYSQL_USER:-lms_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-lms_smkn1}
+      STORAGE_DIR: /app/storage
+      AUTO_SEED: ${AUTO_SEED:-true}
+    volumes:
+      # Bind mount langsung ke disk server sekolah (/var/lib/lms-smkn1/storage)
+      - ${STORAGE_HOST_PATH:-/var/lib/lms-smkn1/storage}:/app/storage
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    networks:
+      - smkn1_net
+
+  cbt_app:
+    build:
+      context: ..
+      dockerfile: docker/app/Dockerfile
+    image: smkn1-lms-app:1.0.0
+    container_name: smkn1_cbt_app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Jakarta
+      NODE_ENV: production
+      PORT: 3000
+      APP_MODE: CBT
+      DATABASE_URL: mysql://${MYSQL_USER:-lms_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-lms_smkn1}
+      STORAGE_DIR: /app/storage
+      AUTO_SEED: "false"
+    volumes:
+      - ${STORAGE_HOST_PATH:-/var/lib/lms-smkn1/storage}:/app/storage
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    networks:
+      - smkn1_net
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: smkn1-nginx:1.0.0
+    container_name: smkn1_nginx
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+      cbt_app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Sertifikat Certbot dari host di-mount read-only ke container Nginx
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - smkn1_net
+
+  backup:
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    image: smkn1-backup:1.0.0
+    container_name: smkn1_backup
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Jakarta
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lms_smkn1}
+      MYSQL_USER: ${MYSQL_USER:-lms_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      BACKUP_DIR: /backup
+      RETENTION_DAYS: 7
+    volumes:
+      - ${BACKUP_HOST_PATH:-/var/lib/lms-smkn1/backups}:/backup
+    networks:
+      - smkn1_net
+
+networks:
+  smkn1_net:
+    driver: bridge
