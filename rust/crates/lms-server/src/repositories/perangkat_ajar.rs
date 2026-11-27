@@ -177,24 +177,29 @@ pub async fn generate_prompt(
     assemble_prompt_for_teacher(template, &prompt_ctx, teacher_inputs)
 }
 
+pub struct SaveTeacherDocumentInput<'a> {
+    pub doc_id: Option<&'a str>,
+    pub teacher_assignment_id: &'a str,
+    pub template_id: &'a str,
+    pub judul: &'a str,
+    pub konten: &'a str,
+    pub generated_prompt: Option<&'a str>,
+    pub checklist_state: Option<HashMap<String, bool>>,
+}
+
 pub async fn save_teacher_document(
     pool: &MySqlPool,
     ctx: &AuthContext,
-    doc_id: Option<&str>,
-    teacher_assignment_id: &str,
-    template_id: &str,
-    judul: &str,
-    konten: &str,
-    generated_prompt: Option<&str>,
-    checklist_state: Option<HashMap<String, bool>>,
+    input: SaveTeacherDocumentInput<'_>,
 ) -> Result<TeacherDocument, DomainError> {
-    let ta_id: i64 = teacher_assignment_id
+    let ta_id: i64 = input
+        .teacher_assignment_id
         .parse()
-        .map_err(|_| DomainError::not_found("teacher_assignment", teacher_assignment_id))?;
+        .map_err(|_| DomainError::not_found("teacher_assignment", input.teacher_assignment_id))?;
     let ta_opt = get_teacher_assignment_by_id(pool, ta_id).await?;
     guard_teacher_assignment_ownership(ctx, ta_opt.as_ref(), "simpan perangkat ajar")?;
 
-    if judul.trim().len() < 3 {
+    if input.judul.trim().len() < 3 {
         return Err(DomainError::validation(
             "judul",
             "Judul perangkat ajar wajib diisi minimal 3 karakter.",
@@ -202,7 +207,7 @@ pub async fn save_teacher_document(
     }
 
     let now = Utc::now();
-    if let Some(existing_id_str) = doc_id.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(existing_id_str) = input.doc_id.map(str::trim).filter(|s| !s.is_empty()) {
         if let Ok(existing_id) = existing_id_str.parse::<i64>() {
             let existing_opt = sqlx::query(
                 "SELECT id, teacher_assignment_id, template_id, judul, konten, generated_prompt, status, generated_at, pasted_at, published_at, validation_json FROM teacher_documents WHERE id = ? LIMIT 1",
@@ -249,15 +254,15 @@ pub async fn save_teacher_document(
 
                 let mut edited = apply_teacher_document_content_edit(
                     &current_doc,
-                    judul.trim(),
-                    konten.trim(),
+                    input.judul.trim(),
+                    input.konten.trim(),
                 );
-                if let Some(gp) = generated_prompt {
+                if let Some(gp) = input.generated_prompt {
                     if !gp.is_empty() {
                         edited.generated_prompt = gp.to_string();
                     }
                 }
-                if let Some(new_checklist) = checklist_state {
+                if let Some(new_checklist) = input.checklist_state {
                     edited.checklist_state = new_checklist;
                 }
 
@@ -289,20 +294,21 @@ pub async fn save_teacher_document(
         }
     }
 
-    let tpl_id: i64 = template_id
+    let tpl_id: i64 = input
+        .template_id
         .parse()
-        .map_err(|_| DomainError::not_found("prompt_template", template_id))?;
+        .map_err(|_| DomainError::not_found("prompt_template", input.template_id))?;
     sqlx::query("SELECT id FROM prompt_templates WHERE id = ? LIMIT 1")
         .bind(tpl_id)
         .fetch_optional(pool)
         .await
         .map_err(map_sqlx_error)?
-        .ok_or_else(|| DomainError::not_found("prompt_template", template_id))?;
+        .ok_or_else(|| DomainError::not_found("prompt_template", input.template_id))?;
 
-    let checklist = checklist_state.unwrap_or_default();
+    let checklist = input.checklist_state.unwrap_or_default();
     let val_json = serde_json::to_value(&checklist)
         .map_err(|_| DomainError::internal("Gagal menyerialisasi checklist."))?;
-    let prompt_text = generated_prompt.unwrap_or("").to_string();
+    let prompt_text = input.generated_prompt.unwrap_or("").to_string();
 
     let res = sqlx::query(
         r#"
@@ -313,8 +319,8 @@ pub async fn save_teacher_document(
     )
     .bind(ta_id)
     .bind(tpl_id)
-    .bind(judul.trim())
-    .bind(konten.trim())
+    .bind(input.judul.trim())
+    .bind(input.konten.trim())
     .bind(&prompt_text)
     .bind(now)
     .bind(now)
@@ -327,8 +333,8 @@ pub async fn save_teacher_document(
         id: res.last_insert_id().to_string(),
         teacher_assignment_id: AssignmentId(ta_id.to_string()),
         template_id: TemplateId(tpl_id.to_string()),
-        judul: judul.trim().to_string(),
-        konten: konten.trim().to_string(),
+        judul: input.judul.trim().to_string(),
+        konten: input.konten.trim().to_string(),
         status: DocumentStatus::Draft,
         generated_prompt: prompt_text,
         generated_at: Some(now.to_rfc3339()),

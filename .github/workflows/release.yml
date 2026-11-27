@@ -1,0 +1,81 @@
+name: Release Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    name: Build, Push & Sign GHCR Image
+    runs-on: ubuntu-24.04
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+      image_tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@49b3bcef9614ceead1885fc7973093c80703cf3f # v3.3.0
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebc0fb26ef8d2335fa5033fad01 # v3.9.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fdb111702f3061fc577319e7a2b979 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@369eb591f42913efd68e99c156f61011af0ef818 # v5.5.1
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push image to GHCR
+        id: build
+        uses: docker/build-push-action@48dad32662fa2b6e1e6bc9da066601445d4715f # v6.10.0
+        with:
+          context: .
+          file: docker/rust-server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Install Cosign for keyless signing
+        uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
+
+      - name: Sign pushed image digest with Cosign
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          IMAGE_LC="$(printf '%s' "${{ env.REGISTRY }}/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          cosign sign --yes "${IMAGE_LC}@${IMAGE_DIGEST}"

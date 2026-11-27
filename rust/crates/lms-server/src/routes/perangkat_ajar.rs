@@ -66,13 +66,15 @@ pub async fn save_teacher_document_handler(
     let document = perangkat_ajar::save_teacher_document(
         &state.pool,
         &ctx,
-        body.id.as_deref(),
-        &body.teacher_assignment_id,
-        &body.template_id,
-        &body.judul,
-        &body.konten,
-        body.generated_prompt.as_deref(),
-        body.checklist_state,
+        perangkat_ajar::SaveTeacherDocumentInput {
+            doc_id: body.id.as_deref(),
+            teacher_assignment_id: &body.teacher_assignment_id,
+            template_id: &body.template_id,
+            judul: &body.judul,
+            konten: &body.konten,
+            generated_prompt: body.generated_prompt.as_deref(),
+            checklist_state: body.checklist_state,
+        },
     )
     .await?;
     Ok(Json(json!({ "ok": true, "document": document })))

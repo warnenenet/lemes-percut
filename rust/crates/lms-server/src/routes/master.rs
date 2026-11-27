@@ -59,6 +59,32 @@ pub async fn get_public_bootstrap(
         .or_else(|| years.into_iter().next())
         .unwrap_or_else(default_academic_year);
 
+    let demo_users: Vec<Value> = if state.config.is_production() {
+        Vec::new()
+    } else {
+        let demo_emails = [
+            "admin@smkn1percut.sch.id",
+            "kepsek@smkn1percut.sch.id",
+            "wakasek@smkn1percut.sch.id",
+            "budi.mtk@smkn1percut.sch.id",
+            "hendra.bk@smkn1percut.sch.id",
+            "rizky.siswa@smkn1percut.sch.id",
+            "aisyah.siswa@smkn1percut.sch.id",
+        ];
+        users
+            .iter()
+            .filter(|u| demo_emails.contains(&u.email.as_str()))
+            .map(|u| {
+                json!({
+                    "id": u.id,
+                    "nama": u.nama,
+                    "email": u.email,
+                    "roles": u.roles
+                })
+            })
+            .collect()
+    };
+
     Ok(Json(json!({
         "school": school,
         "academic_year": active_year,
@@ -66,7 +92,7 @@ pub async fn get_public_bootstrap(
         "engine": "mysql",
         "allow_demo_reset": false,
         "total_accounts": users.len(),
-        "demo_users": []
+        "demo_users": demo_users
     })))
 }
 

@@ -1,0 +1,114 @@
+name: Deploy to School Server
+
+on:
+  workflow_run:
+    workflows: ["Release Docker Image"]
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag image GHCR yang akan di-deploy"
+        required: false
+        default: "latest"
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    name: SSH Rolling Deploy & Healthcheck
+    runs-on: ubuntu-24.04
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    environment: production
+    steps:
+      - name: Deploy and verify via SSH
+        uses: appleboy/ssh-action@91f3272dc26d36ed9bc96bc6b4b45dfceb2298e3 # v1.2.3
+        env:
+          TARGET_IMAGE_TAG: ${{ github.event.inputs.image_tag || 'latest' }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR || '/opt/lms-smkn1' }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || '' }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || '' }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          envs: TARGET_IMAGE_TAG,DEPLOY_DIR,GHCR_USERNAME,GHCR_TOKEN
+          script: |
+            set -euo pipefail
+
+            cd "$DEPLOY_DIR"
+            if [ ! -f docker/.env ]; then
+              echo "[deploy] FATAL: docker/.env tidak ditemukan di ${DEPLOY_DIR}." >&2
+              exit 1
+            fi
+
+            echo "[deploy] Sinkronisasi konfigurasi repository (main)..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            set -a
+            # shellcheck disable=SC1091
+            . ./docker/.env
+            set +a
+
+            export IMAGE_TAG="${TARGET_IMAGE_TAG:-${IMAGE_TAG:-latest}}"
+            COMPOSE="docker compose -f docker/docker-compose.prod.yml --env-file docker/.env"
+            IMAGE_REF="ghcr.io/${GITHUB_REPOSITORY_LOWER}:${IMAGE_TAG}"
+
+            if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USERNAME:-}" ]; then
+              echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+            fi
+
+            PREV_IMAGE_ID=$(docker inspect --format='{{.Image}}' smkn1_prod_lms 2>/dev/null || true)
+
+            echo "[deploy] Menjalankan pre-deploy safety backup jika container backup aktif..."
+            if docker ps --format '{{.Names}}' | grep -qx 'smkn1_prod_backup'; then
+              $COMPOSE exec -T backup /scripts/backup.sh
+            fi
+
+            echo "[deploy] Pulling image baru: ${IMAGE_REF}..."
+            $COMPOSE pull app cbt_app
+
+            echo "[deploy] Memastikan mysql, nginx, dan backup aktif..."
+            $COMPOSE up -d --remove-orphans mysql backup
+
+            echo "[deploy] Rolling restart app (LMS)..."
+            if ! $COMPOSE up -d --no-deps --wait --wait-timeout 90 app; then
+              echo "[deploy] Healthcheck app gagal!" >&2
+              if [ -n "$PREV_IMAGE_ID" ]; then
+                echo "[deploy] Melakukan rollback ke image sebelumnya (${PREV_IMAGE_ID})..."
+                docker tag "$PREV_IMAGE_ID" "$IMAGE_REF"
+                $COMPOSE up -d --no-deps --wait --wait-timeout 90 app || true
+              fi
+              exit 1
+            fi
+
+            echo "[deploy] Rolling restart cbt_app (CBT)..."
+            if ! $COMPOSE up -d --no-deps --wait --wait-timeout 90 cbt_app; then
+              echo "[deploy] Healthcheck cbt_app gagal!" >&2
+              if [ -n "$PREV_IMAGE_ID" ]; then
+                echo "[deploy] Melakukan rollback app & cbt_app ke image sebelumnya (${PREV_IMAGE_ID})..."
+                docker tag "$PREV_IMAGE_ID" "$IMAGE_REF"
+                $COMPOSE up -d --no-deps --wait --wait-timeout 90 app cbt_app || true
+              fi
+              exit 1
+            fi
+
+            $COMPOSE up -d --no-deps --wait --wait-timeout 60 nginx
+
+            echo "[deploy] Verifikasi akhir /api/health melalui Nginx..."
+            curl -fsS http://127.0.0.1/api/health
+            echo ""
+            $COMPOSE ps
+
+            echo "[deploy] Membersihkan image lama (> 7 hari)..."
+            docker image prune -f --filter "until=168h" || true

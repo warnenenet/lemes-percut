@@ -3,8 +3,13 @@ import {
   BootstrapResponse,
   ClientStatePayload,
   apiRequest,
+  clearAuthSession,
   fetchBootstrap,
   fetchWorkspaceState,
+  getStoredAuthSession,
+  loginWithCredentials,
+  logoutSession,
+  setStoredActiveRole,
 } from './api/client';
 import { LoginView } from './components/LoginView';
 import { NavItem, SidebarLayout } from './components/SidebarLayout';
@@ -118,10 +123,7 @@ export default function App() {
           resolvedMode === 'CBT'
             ? 'rizky.siswa@smkn1percut.sch.id'
             : 'budi.mtk@smkn1percut.sch.id';
-        const loginRes = await apiRequest<{ ok: true; user: User }>('/api/auth/login', {
-          method: 'POST',
-          body: { identifier: defaultEmail, password: 'smkn1percut' },
-        });
+        const loginRes = await loginWithCredentials(defaultEmail, 'smkn1percut');
         if (mounted && loginRes.ok) {
           const user = loginRes.data.user;
           const initialRole = user.roles[0];
@@ -133,6 +135,25 @@ export default function App() {
           const stateRes = await fetchWorkspaceState(user.id, initialRole);
           if (mounted && stateRes.ok) {
             setPayload(stateRes.data);
+          }
+        }
+      } else {
+        const stored = getStoredAuthSession();
+        if (stored.token && stored.user) {
+          const restoredRole =
+            stored.activeRole && stored.user.roles.includes(stored.activeRole)
+              ? stored.activeRole
+              : stored.user.roles[0];
+          const stateRes = await fetchWorkspaceState(stored.user.id, restoredRole);
+          if (mounted && stateRes.ok) {
+            setSessionUser(stored.user);
+            setActiveRole(restoredRole);
+            setActiveSection(
+              resolvedMode === 'CBT' && restoredRole === 'SISWA' ? 'cbt' : 'dashboard',
+            );
+            setPayload(stateRes.data);
+          } else if (mounted) {
+            clearAuthSession();
           }
         }
       }
@@ -148,6 +169,7 @@ export default function App() {
     setSessionUser(user);
     const defaultRole = user.roles[0];
     setActiveRole(defaultRole);
+    setStoredActiveRole(defaultRole);
     setActiveSection(appMode === 'CBT' && defaultRole === 'SISWA' ? 'cbt' : 'dashboard');
     setShowRustPrep(false);
     await refreshState(user.id, defaultRole);
@@ -156,6 +178,7 @@ export default function App() {
   async function handleSwitchRole(newRole: UserRole) {
     if (!sessionUser) return;
     setActiveRole(newRole);
+    setStoredActiveRole(newRole);
     setActiveSection(appMode === 'CBT' && newRole === 'SISWA' ? 'cbt' : 'dashboard');
     setShowRustPrep(false);
     await refreshState(sessionUser.id, newRole);
@@ -166,7 +189,8 @@ export default function App() {
     await refreshState();
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    await logoutSession();
     setSessionUser(null);
     setPayload(null);
     setShowRustPrep(false);

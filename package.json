@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "ALLOW_JSON_FALLBACK=true tsx server.ts",
     "start": "node server.ts",
-    "build": "vite build && npm run build:server",
-    "build:server": "esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
+    "build": "vite build",
+    "build:ts-server": "esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",

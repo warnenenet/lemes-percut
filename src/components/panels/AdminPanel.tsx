@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -45,6 +45,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [mappingDraft, setMappingDraft] = useState(
     state.erapor_mappings[0]?.mapping ?? [],
   );
+
+  useEffect(() => {
+    setMappingDraft(state.erapor_mappings[0]?.mapping ?? []);
+  }, [state.erapor_mappings]);
 
   async function handlePreviewImport() {
     setFeedback(null);

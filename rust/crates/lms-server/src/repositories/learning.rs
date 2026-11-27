@@ -163,34 +163,43 @@ pub async fn list_submissions(pool: &MySqlPool) -> Result<Vec<TaskSubmission>, D
         .collect())
 }
 
+pub struct CreateSessionInput<'a> {
+    pub teacher_assignment_id: &'a str,
+    pub topik: &'a str,
+    pub tanggal: Option<&'a str>,
+    pub jam_mulai: &'a str,
+    pub jam_selesai: &'a str,
+    pub tipe_sesi: SessionType,
+    pub module_id: Option<&'a str>,
+    pub minimum_read_pct: u8,
+}
+
 pub async fn create_session(
     pool: &MySqlPool,
     ctx: &AuthContext,
-    teacher_assignment_id: &str,
-    topik: &str,
-    tanggal: Option<&str>,
-    jam_mulai: &str,
-    jam_selesai: &str,
-    tipe_sesi: SessionType,
-    module_id: Option<&str>,
-    minimum_read_pct: u8,
+    input: CreateSessionInput<'_>,
 ) -> Result<TeachingSession, DomainError> {
-    let ta_id: i64 = teacher_assignment_id
+    let ta_id: i64 = input
+        .teacher_assignment_id
         .parse()
-        .map_err(|_| DomainError::not_found("teacher_assignment", teacher_assignment_id))?;
+        .map_err(|_| DomainError::not_found("teacher_assignment", input.teacher_assignment_id))?;
     let ta = get_teacher_assignment_by_id(pool, ta_id).await?;
     guard_teacher_assignment_ownership(ctx, ta.as_ref(), "sesi pembelajaran")?;
 
-    if topik.trim().len() < 3 {
-        return Err(DomainError::validation("topik", "Topik sesi wajib diisi minimal 3 karakter."));
+    if input.topik.trim().len() < 3 {
+        return Err(DomainError::validation(
+            "topik",
+            "Topik sesi wajib diisi minimal 3 karakter.",
+        ));
     }
 
-    let date_str = tanggal
+    let date_str = input
+        .tanggal
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
-    let mod_num: Option<i64> = module_id.and_then(|s| s.parse().ok());
+    let mod_num: Option<i64> = input.module_id.and_then(|s| s.parse().ok());
 
     let mut tx = pool.begin().await.map_err(map_sqlx_error)?;
     let max_pertemuan: Option<i32> = sqlx::query_scalar(
@@ -208,12 +217,12 @@ pub async fn create_session(
     .bind(ta_id)
     .bind(next_pertemuan)
     .bind(&date_str)
-    .bind(jam_mulai.trim())
-    .bind(jam_selesai.trim())
-    .bind(tipe_sesi.as_str())
-    .bind(topik.trim())
+    .bind(input.jam_mulai.trim())
+    .bind(input.jam_selesai.trim())
+    .bind(input.tipe_sesi.as_str())
+    .bind(input.topik.trim())
     .bind(mod_num)
-    .bind(minimum_read_pct as i32)
+    .bind(input.minimum_read_pct as i32)
     .execute(&mut *tx)
     .await
     .map_err(map_sqlx_error)?;
@@ -226,13 +235,13 @@ pub async fn create_session(
         teacher_assignment_id: AssignmentId(ta_id.to_string()),
         pertemuan_ke: next_pertemuan as u32,
         tanggal: date_str,
-        jam_mulai: jam_mulai.trim().to_string(),
-        jam_selesai: jam_selesai.trim().to_string(),
-        tipe_sesi,
-        topik: topik.trim().to_string(),
+        jam_mulai: input.jam_mulai.trim().to_string(),
+        jam_selesai: input.jam_selesai.trim().to_string(),
+        tipe_sesi: input.tipe_sesi,
+        topik: input.topik.trim().to_string(),
         module_id: mod_num.map(|m| ModuleId(m.to_string())),
         status: SessionStatus::Open,
-        minimum_read_pct,
+        minimum_read_pct: input.minimum_read_pct,
     })
 }
 
@@ -607,43 +616,49 @@ pub async fn clone_module(
     })
 }
 
+pub struct CreateTaskInput<'a> {
+    pub teacher_assignment_id: &'a str,
+    pub session_id: Option<&'a str>,
+    pub judul: &'a str,
+    pub deskripsi: &'a str,
+    pub deadline_iso: Option<&'a str>,
+    pub tipe: TaskType,
+    pub rubrik: Option<&'a str>,
+}
+
 pub async fn create_task(
     pool: &MySqlPool,
     ctx: &AuthContext,
-    teacher_assignment_id: &str,
-    session_id: Option<&str>,
-    judul: &str,
-    deskripsi: &str,
-    deadline_iso: Option<&str>,
-    tipe: TaskType,
-    rubrik: Option<&str>,
+    input: CreateTaskInput<'_>,
 ) -> Result<AssignmentTask, DomainError> {
-    let ta_id: i64 = teacher_assignment_id
+    let ta_id: i64 = input
+        .teacher_assignment_id
         .parse()
-        .map_err(|_| DomainError::not_found("teacher_assignment", teacher_assignment_id))?;
+        .map_err(|_| DomainError::not_found("teacher_assignment", input.teacher_assignment_id))?;
     let ta = get_teacher_assignment_by_id(pool, ta_id).await?;
     guard_teacher_assignment_ownership(ctx, ta.as_ref(), "tugas pembelajaran")?;
 
-    if judul.trim().len() < 3 {
+    if input.judul.trim().len() < 3 {
         return Err(DomainError::validation("judul", "Judul tugas wajib diisi."));
     }
 
-    let deadline_dt = deadline_iso
+    let deadline_dt = input
+        .deadline_iso
         .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&Utc))
         .unwrap_or_else(|| Utc::now() + chrono::Duration::days(7));
-    let ses_num: Option<i64> = session_id.and_then(|s| s.parse().ok());
+    let ses_num: Option<i64> = input.session_id.and_then(|s| s.parse().ok());
 
     let res = sqlx::query(
         "INSERT INTO assignments (session_id, teacher_assignment_id, judul, deskripsi, deadline, tipe, rubrik) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(ses_num)
     .bind(ta_id)
-    .bind(judul.trim())
-    .bind(deskripsi.trim())
+    .bind(input.judul.trim())
+    .bind(input.deskripsi.trim())
     .bind(deadline_dt)
-    .bind(tipe.as_str())
-    .bind(rubrik)
+    .bind(input.tipe.as_str())
+    .bind(input.rubrik)
     .execute(pool)
     .await
     .map_err(map_sqlx_error)?;
@@ -652,11 +667,11 @@ pub async fn create_task(
         id: TaskId(res.last_insert_id().to_string()),
         session_id: ses_num.map(|v| SessionId(v.to_string())),
         teacher_assignment_id: AssignmentId(ta_id.to_string()),
-        judul: judul.trim().to_string(),
-        deskripsi: deskripsi.trim().to_string(),
+        judul: input.judul.trim().to_string(),
+        deskripsi: input.deskripsi.trim().to_string(),
         deadline: deadline_dt.to_rfc3339(),
-        tipe,
-        rubrik: rubrik.map(str::to_string),
+        tipe: input.tipe,
+        rubrik: input.rubrik.map(str::to_string),
         cloned_from: None,
     })
 }

@@ -50,13 +50,15 @@ pub async fn create_exam_handler(
     let exam = cbt::create_exam(
         &state.pool,
         &ctx,
-        &body.teacher_assignment_id,
-        tipe,
-        &body.judul,
-        &body.waktu_mulai,
-        body.durasi_menit,
-        body.target_student_ids,
-        body.parent_exam_id.as_deref(),
+        cbt::CreateExamInput {
+            teacher_assignment_id: &body.teacher_assignment_id,
+            tipe,
+            judul: &body.judul,
+            waktu_mulai_iso: &body.waktu_mulai,
+            durasi_menit: body.durasi_menit,
+            target_student_ids: body.target_student_ids,
+            parent_exam_id: body.parent_exam_id.as_deref(),
+        },
     )
     .await?;
 

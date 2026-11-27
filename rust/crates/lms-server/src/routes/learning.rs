@@ -110,14 +110,16 @@ pub async fn create_session_handler(
     let session = learning::create_session(
         &state.pool,
         &ctx,
-        &body.teacher_assignment_id,
-        &body.topik,
-        body.tanggal.as_deref(),
-        body.jam_mulai.as_deref().unwrap_or("07:30"),
-        body.jam_selesai.as_deref().unwrap_or("09:00"),
-        tipe_sesi,
-        body.module_id.as_deref(),
-        body.minimum_read_pct.unwrap_or(60),
+        learning::CreateSessionInput {
+            teacher_assignment_id: &body.teacher_assignment_id,
+            topik: &body.topik,
+            tanggal: body.tanggal.as_deref(),
+            jam_mulai: body.jam_mulai.as_deref().unwrap_or("07:30"),
+            jam_selesai: body.jam_selesai.as_deref().unwrap_or("09:00"),
+            tipe_sesi,
+            module_id: body.module_id.as_deref(),
+            minimum_read_pct: body.minimum_read_pct.unwrap_or(60),
+        },
     )
     .await?;
 
@@ -211,13 +213,15 @@ pub async fn create_task_handler(
     let task = learning::create_task(
         &state.pool,
         &ctx,
-        &body.teacher_assignment_id,
-        body.session_id.as_deref(),
-        &body.judul,
-        &body.deskripsi,
-        body.deadline.as_deref(),
-        tipe,
-        body.rubrik.as_deref(),
+        learning::CreateTaskInput {
+            teacher_assignment_id: &body.teacher_assignment_id,
+            session_id: body.session_id.as_deref(),
+            judul: &body.judul,
+            deskripsi: &body.deskripsi,
+            deadline_iso: body.deadline.as_deref(),
+            tipe,
+            rubrik: body.rubrik.as_deref(),
+        },
     )
     .await?;
     Ok(Json(json!({ "ok": true, "task": task })))

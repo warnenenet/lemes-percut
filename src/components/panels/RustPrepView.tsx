@@ -81,30 +81,30 @@ export const RustPrepView: React.FC<RustPrepViewProps> = ({
             /rust/crates/lms-domain + lms-server
           </p>
           <p className="text-xs text-slate-600">
-            Siap build produksi via <span className="font-mono">docker/docker-compose.rust.yml</span>.
+            Build image produksi GHCR via <span className="font-mono">docker/docker-compose.prod.yml</span>.
           </p>
         </div>
 
         <div className="pt-4 md:pt-0 md:pl-6 space-y-1">
           <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
             <Server className="w-4 h-4 text-sky-800" aria-hidden="true" />
-            <span>Runtime Pratinjau Sandbox Aktif</span>
+            <span>Backend Engine Aktif</span>
           </div>
           <p className="text-base font-bold text-slate-900 font-mono">
-            Node/Express Parity ({engineName})
+            Pure Rust Axum + SQLx ({engineName})
           </p>
           <p className="text-xs text-slate-600">
-            Kontainer pratinjau menjalankan paritas TypeScript 1:1 karena toolchain <span className="font-mono">cargo/rustc</span> tidak terpasang di sandbox pratinjau.
+            Frontend SPA (<span className="font-mono">dist/</span>) memanggil endpoint <span className="font-mono">/api/*</span> dengan otentikasi Bearer token.
           </p>
         </div>
 
         <div className="pt-4 md:pt-0 md:pl-6 space-y-1">
           <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
             <ShieldCheck className="w-4 h-4 text-emerald-700" aria-hidden="true" />
-            <span>Perintah Build Rust Produksi</span>
+            <span>Deploy Stack Produksi</span>
           </div>
           <p className="text-xs font-mono text-slate-800 bg-slate-50 border border-slate-200 rounded px-2.5 py-2">
-            docker compose -f docker/docker-compose.rust.yml up --build -d
+            docker compose -f docker/docker-compose.prod.yml --env-file docker/.env up -d
           </p>
         </div>
       </div>

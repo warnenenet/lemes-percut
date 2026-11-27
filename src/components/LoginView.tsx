@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, LogIn, ShieldCheck, ArrowRight, MonitorCheck } from 'lucide-react';
 import { User, UserRole } from '../domain/types';
+import { loginWithCredentials } from '../api/client';
 import { PWAInstallButton } from '../pwa/PWAInstallButton';
 import { OfflineIndicator } from '../pwa/OfflineIndicator';
 
@@ -55,19 +56,12 @@ export const LoginView: React.FC<LoginViewProps> = ({
     }
     setSubmitting(true);
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: idValue.trim(), password: passValue }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setErrorMsg(data.error?.message ?? 'Gagal masuk ke sistem.');
+      const res = await loginWithCredentials(idValue.trim(), passValue);
+      if (!res.ok) {
+        setErrorMsg(res.error.message ?? 'Gagal masuk ke sistem.');
         return;
       }
-      onLoginSuccess(data.user as User);
-    } catch {
-      setErrorMsg('Koneksi ke server sekolah gagal.');
+      onLoginSuccess(res.data.user);
     } finally {
       setSubmitting(false);
     }
@@ -227,19 +221,21 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </button>
           </form>
 
+          <div className="pt-4 border-t border-slate-200 flex items-center justify-between gap-2 text-xs text-slate-600">
+            <span>Portal Dual-Mode SMKN 1 Percut</span>
+            <a
+              href={isCbtMode ? '?mode=lms' : '?mode=cbt'}
+              className="text-sky-800 hover:underline font-semibold whitespace-nowrap"
+            >
+              {isCbtMode ? 'Beralih ke Mode LMS' : 'Pratinjau Mode CBT'}
+            </a>
+          </div>
+
           {demoUsers.length > 0 && (
-            <div className="pt-5 border-t border-slate-200 space-y-2.5">
-              <div className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-700">
-                <span className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-sky-800" aria-hidden="true" />
-                  <span>Akses Cepat Uji 7 Role RBAC</span>
-                </span>
-                <a
-                  href={isCbtMode ? '?mode=lms' : '?mode=cbt'}
-                  className="text-sky-800 hover:underline font-medium whitespace-nowrap"
-                >
-                  {isCbtMode ? 'Beralih ke Mode LMS' : 'Pratinjau Mode CBT'}
-                </a>
+            <div className="pt-4 border-t border-slate-200 space-y-2.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                <ShieldCheck className="w-4 h-4 text-sky-800" aria-hidden="true" />
+                <span>Akses Cepat Uji 7 Role RBAC</span>
               </div>
               <div className="border border-slate-200 rounded-lg grid grid-cols-1 sm:grid-cols-2 gap-px bg-slate-200 overflow-hidden">
                 {demoUsers.map((u) => (

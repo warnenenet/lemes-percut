@@ -165,36 +165,41 @@ pub async fn list_exam_answers(pool: &MySqlPool) -> Result<Vec<ExamAnswer>, Doma
         .collect())
 }
 
+pub struct CreateExamInput<'a> {
+    pub teacher_assignment_id: &'a str,
+    pub tipe: ExamType,
+    pub judul: &'a str,
+    pub waktu_mulai_iso: &'a str,
+    pub durasi_menit: i64,
+    pub target_student_ids: Option<Vec<String>>,
+    pub parent_exam_id: Option<&'a str>,
+}
+
 pub async fn create_exam(
     pool: &MySqlPool,
     ctx: &AuthContext,
-    teacher_assignment_id: &str,
-    tipe: ExamType,
-    judul: &str,
-    waktu_mulai_iso: &str,
-    durasi_menit: i64,
-    target_student_ids: Option<Vec<String>>,
-    parent_exam_id: Option<&str>,
+    input: CreateExamInput<'_>,
 ) -> Result<Exam, DomainError> {
-    let ta_id: i64 = teacher_assignment_id
+    let ta_id: i64 = input
+        .teacher_assignment_id
         .parse()
-        .map_err(|_| DomainError::not_found("teacher_assignment", teacher_assignment_id))?;
+        .map_err(|_| DomainError::not_found("teacher_assignment", input.teacher_assignment_id))?;
     let ta_opt = get_teacher_assignment_by_id(pool, ta_id).await?;
 
-    let ta = if tipe == ExamType::Susulan {
+    let ta = if input.tipe == ExamType::Susulan {
         guard_susulan_exam_creation(ctx, ta_opt.as_ref())?
     } else {
         guard_teacher_assignment_ownership(ctx, ta_opt.as_ref(), "jadwal CBT")?
     };
 
-    if judul.trim().len() < 3 {
+    if input.judul.trim().len() < 3 {
         return Err(DomainError::validation(
             "judul",
             "Judul ujian CBT wajib diisi minimal 3 karakter.",
         ));
     }
 
-    let waktu_mulai_dt = DateTime::parse_from_rfc3339(waktu_mulai_iso.trim())
+    let waktu_mulai_dt = DateTime::parse_from_rfc3339(input.waktu_mulai_iso.trim())
         .map_err(|_| {
             DomainError::validation(
                 "waktu_mulai",
@@ -276,18 +281,19 @@ pub async fn create_exam(
         })
         .collect();
 
-    let candidate_targets = target_student_ids
+    let candidate_targets = input
+        .target_student_ids
         .clone()
         .map(|ids| ids.into_iter().map(StudentId).collect());
-    let parent_num: Option<i64> = parent_exam_id.and_then(|s| s.parse().ok());
+    let parent_num: Option<i64> = input.parent_exam_id.and_then(|s| s.parse().ok());
 
     let candidate = Exam {
         id: ExamId("candidate".to_string()),
         teacher_assignment_id: ta.id.clone(),
-        tipe,
-        judul: judul.trim().to_string(),
+        tipe: input.tipe,
+        judul: input.judul.trim().to_string(),
         waktu_mulai: waktu_mulai_dt.to_rfc3339(),
-        durasi_menit,
+        durasi_menit: input.durasi_menit,
         token: String::new(),
         status: ExamStatus::Aktif,
         parent_exam_id: parent_num.map(|id| ExamId(id.to_string())),
@@ -305,9 +311,10 @@ pub async fn create_exam(
 
     let raw_uuid = Uuid::new_v4().simple().to_string().to_uppercase();
     let token: String = raw_uuid.chars().take(6).collect();
-    let targets_json: Option<serde_json::Value> = target_student_ids
+    let targets_json: Option<serde_json::Value> = input
+        .target_student_ids
         .as_ref()
-        .map(|ids| serde_json::to_value(ids))
+        .map(serde_json::to_value)
         .transpose()
         .map_err(|_| DomainError::internal("Gagal menyerialisasi daftar siswa target ujian."))?;
 
@@ -319,10 +326,10 @@ pub async fn create_exam(
         "#,
     )
     .bind(ta_id)
-    .bind(tipe.as_str())
-    .bind(judul.trim())
+    .bind(input.tipe.as_str())
+    .bind(input.judul.trim())
     .bind(waktu_mulai_dt)
-    .bind(durasi_menit as i32)
+    .bind(input.durasi_menit as i32)
     .bind(&token)
     .bind(parent_num)
     .bind(targets_json)
@@ -340,8 +347,8 @@ pub async fn create_exam(
         &new_id.to_string(),
         &format!(
             "Membuat jadwal CBT \"{}\" ({}) token {}",
-            judul.trim(),
-            tipe.as_str(),
+            input.judul.trim(),
+            input.tipe.as_str(),
             token
         ),
     )
@@ -352,10 +359,10 @@ pub async fn create_exam(
     Ok(Exam {
         id: ExamId(new_id.to_string()),
         teacher_assignment_id: ta.id.clone(),
-        tipe,
-        judul: judul.trim().to_string(),
+        tipe: input.tipe,
+        judul: input.judul.trim().to_string(),
         waktu_mulai: waktu_mulai_dt.to_rfc3339(),
-        durasi_menit,
+        durasi_menit: input.durasi_menit,
         token,
         status: ExamStatus::Aktif,
         parent_exam_id: parent_num.map(|id| ExamId(id.to_string())),

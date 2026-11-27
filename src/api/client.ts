@@ -40,6 +40,85 @@ export interface UploadedFileResponse {
   mimeType: string;
 }
 
+const TOKEN_KEY = 'lms_smkn1_auth_token';
+const USER_KEY = 'lms_smkn1_auth_user';
+const ROLE_KEY = 'lms_smkn1_active_role';
+
+let memoryToken: string | null = null;
+
+function readStorage(key: string): string | null {
+  try {
+    return typeof window !== 'undefined' ? window.sessionStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string | null) {
+  try {
+    if (typeof window === 'undefined') return;
+    if (value === null) {
+      window.sessionStorage.removeItem(key);
+    } else {
+      window.sessionStorage.setItem(key, value);
+    }
+  } catch {
+    // Ignore storage quota / privacy mode restrictions
+  }
+}
+
+export function getAuthToken(): string | null {
+  if (memoryToken) return memoryToken;
+  const stored = readStorage(TOKEN_KEY);
+  if (stored) memoryToken = stored;
+  return stored;
+}
+
+export function setAuthSession(
+  token: string | null,
+  user?: User | null,
+  activeRole?: UserRole | null,
+) {
+  memoryToken = token;
+  writeStorage(TOKEN_KEY, token);
+  if (user !== undefined) {
+    writeStorage(USER_KEY, user ? JSON.stringify(user) : null);
+  }
+  if (activeRole !== undefined) {
+    writeStorage(ROLE_KEY, activeRole);
+  }
+}
+
+export function setStoredActiveRole(role: UserRole) {
+  writeStorage(ROLE_KEY, role);
+}
+
+export function getStoredAuthSession(): {
+  token: string | null;
+  user: User | null;
+  activeRole: UserRole | null;
+} {
+  const token = getAuthToken();
+  const userRaw = readStorage(USER_KEY);
+  const roleRaw = readStorage(ROLE_KEY) as UserRole | null;
+  let user: User | null = null;
+  if (userRaw) {
+    try {
+      user = JSON.parse(userRaw) as User;
+    } catch {
+      user = null;
+    }
+  }
+  return { token, user, activeRole: roleRaw };
+}
+
+export function clearAuthSession() {
+  memoryToken = null;
+  writeStorage(TOKEN_KEY, null);
+  writeStorage(USER_KEY, null);
+  writeStorage(ROLE_KEY, null);
+}
+
 export async function apiRequest<T>(
   url: string,
   options: {
@@ -52,8 +131,15 @@ export async function apiRequest<T>(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (options.userId) headers['x-user-id'] = options.userId;
-  if (options.activeRole) headers['x-active-role'] = options.activeRole;
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  } else if (options.userId) {
+    headers['x-user-id'] = options.userId;
+  }
+  if (options.activeRole) {
+    headers['x-active-role'] = options.activeRole;
+  }
 
   try {
     const res = await fetch(url, {
@@ -61,18 +147,40 @@ export async function apiRequest<T>(
       headers,
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     });
-    const json = await res.json();
+    const rawText = await res.text();
+    let json: Record<string, unknown> = {};
+    if (rawText) {
+      try {
+        json = JSON.parse(rawText) as Record<string, unknown>;
+      } catch {
+        json = {
+          ok: false,
+          error: {
+            httpStatus: res.status,
+            message: res.ok
+              ? 'Respons server tidak berbentuk JSON valid.'
+              : `HTTP ${res.status}: ${rawText.slice(0, 140)}`,
+          },
+        };
+      }
+    }
+
+    if (res.status === 401 && !url.includes('/api/auth/login')) {
+      clearAuthSession();
+    }
+
     if (!res.ok || json.ok === false) {
+      const errObj = json.error as ApiErrorShape | undefined;
       return {
         ok: false,
-        error: json.error ?? { httpStatus: res.status, message: 'Permintaan gagal diproses.' },
+        error: errObj ?? { httpStatus: res.status, message: 'Permintaan gagal diproses.' },
       };
     }
     return { ok: true, data: json as T };
   } catch {
     return {
       ok: false,
-      error: { httpStatus: 0, message: 'Tidak dapat terhubung ke server LMS lokal.' },
+      error: { httpStatus: 0, message: 'Tidak dapat terhubung ke server LMS.' },
     };
   }
 }
@@ -82,10 +190,25 @@ export async function fetchBootstrap() {
 }
 
 export async function loginWithCredentials(identifier: string, password: string) {
-  return apiRequest<{ ok: true; user: User }>('/api/auth/login', {
+  const res = await apiRequest<{ ok: true; token?: string; user: User }>('/api/auth/login', {
     method: 'POST',
     body: { identifier, password },
   });
+  if (res.ok) {
+    setAuthSession(
+      res.data.token ?? null,
+      res.data.user,
+      res.data.user.roles[0] ?? null,
+    );
+  }
+  return res;
+}
+
+export async function logoutSession() {
+  if (getAuthToken()) {
+    await apiRequest('/api/auth/logout', { method: 'POST' });
+  }
+  clearAuthSession();
 }
 
 export async function fetchWorkspaceState(userId: string, activeRole: UserRole) {

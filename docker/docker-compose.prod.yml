@@ -1,0 +1,174 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: smkn1_prod_mysql
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Jakarta}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in docker/.env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lms_smkn1}
+      MYSQL_USER: ${MYSQL_USER:-lms_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in docker/.env}
+    volumes:
+      - ${MYSQL_HOST_PATH:-/var/lib/lms-smkn1/mysql-data}:/var/lib/mysql
+      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -u root"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+    networks:
+      - smkn1_prod_net
+
+  app:
+    image: ghcr.io/${GITHUB_REPOSITORY_LOWER:?Set GITHUB_REPOSITORY_LOWER in docker/.env}:${IMAGE_TAG:-latest}
+    pull_policy: always
+    container_name: smkn1_prod_lms
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Jakarta}
+      PORT: "3000"
+      APP_MODE: LMS
+      APP_ENV: production
+      RUN_MIGRATIONS: "true"
+      AUTO_SEED: ${AUTO_SEED:-false}
+      DATABASE_URL: mysql://${MYSQL_USER:-lms_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-lms_smkn1}
+      STORAGE_DIR: /app/storage
+      DIST_DIR: /app/dist
+      BACKUP_DIR: /backup
+      RUST_LOG: ${RUST_LOG:-lms_server=info,tower_http=info}
+    volumes:
+      - ${STORAGE_HOST_PATH:-/var/lib/lms-smkn1/storage}:/app/storage
+      - ${BACKUP_HOST_PATH:-/var/lib/lms-smkn1/backups}:/backup:ro
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    networks:
+      - smkn1_prod_net
+
+  cbt_app:
+    image: ghcr.io/${GITHUB_REPOSITORY_LOWER:?Set GITHUB_REPOSITORY_LOWER in docker/.env}:${IMAGE_TAG:-latest}
+    pull_policy: always
+    container_name: smkn1_prod_cbt
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Jakarta}
+      PORT: "3001"
+      APP_MODE: CBT
+      APP_ENV: production
+      RUN_MIGRATIONS: "false"
+      AUTO_SEED: "false"
+      DATABASE_URL: mysql://${MYSQL_USER:-lms_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-lms_smkn1}
+      STORAGE_DIR: /app/storage
+      DIST_DIR: /app/dist
+      BACKUP_DIR: /backup
+      RUST_LOG: ${RUST_LOG:-lms_server=info,tower_http=info}
+    volumes:
+      - ${STORAGE_HOST_PATH:-/var/lib/lms-smkn1/storage}:/app/storage
+      - ${BACKUP_HOST_PATH:-/var/lib/lms-smkn1/backups}:/backup:ro
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3001/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    networks:
+      - smkn1_prod_net
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: smkn1_prod_nginx
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+      cbt_app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/api/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - smkn1_prod_net
+
+  backup:
+    image: mysql:8.0
+    container_name: smkn1_prod_backup
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Jakarta}
+      MYSQL_HOST: mysql
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lms_smkn1}
+      MYSQL_USER: ${MYSQL_USER:-lms_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in docker/.env}
+      BACKUP_DIR: /backup
+      RETENTION_DAYS: "7"
+    volumes:
+      - ./backup/backup.sh:/scripts/backup.sh:ro
+      - ${BACKUP_HOST_PATH:-/var/lib/lms-smkn1/backups}:/backup
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "[backup-scheduler] Aktif (jadwal harian 02:00 WIB)..."
+        LAST_RUN=""
+        while true; do
+          NOW_HM="$$(date +%H%M)"
+          TODAY="$$(date +%Y-%m-%d)"
+          if [ "$$NOW_HM" = "0200" ] && [ "$$LAST_RUN" != "$$TODAY" ]; then
+            /scripts/backup.sh || echo "[backup-scheduler] Peringatan: backup gagal" >&2
+            LAST_RUN="$$TODAY"
+          fi
+          sleep 30
+        done
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - smkn1_prod_net
+
+networks:
+  smkn1_prod_net:
+    driver: bridge

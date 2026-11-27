@@ -575,7 +575,8 @@ export const MonitoringRolesPanel: React.FC<MonitoringRolesPanelProps> = ({
                                 <button
                                   type="button"
                                   onClick={async () => {
-                                    await apiRequest('/api/walikelas/notes', {
+                                    setFeedback(null);
+                                    const res = await apiRequest('/api/walikelas/notes', {
                                       method: 'POST',
                                       userId: auth.user.id,
                                       activeRole: auth.activeRole,
@@ -587,6 +588,10 @@ export const MonitoringRolesPanel: React.FC<MonitoringRolesPanelProps> = ({
                                           '',
                                       },
                                     });
+                                    if (!res.ok) {
+                                      setFeedback({ type: 'err', text: res.error.message });
+                                      return;
+                                    }
                                     setFeedback({
                                       type: 'ok',
                                       text: 'Catatan wali kelas disimpan.',

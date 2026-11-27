@@ -922,12 +922,17 @@ export const GuruMapelPanel: React.FC<GuruMapelPanelProps> = ({
                         <button
                           type="button"
                           onClick={async () => {
-                            await apiRequest(`/api/notebook-entries/${entry.id}/comment`, {
+                            setFeedback(null);
+                            const res = await apiRequest(`/api/notebook-entries/${entry.id}/comment`, {
                               method: 'POST',
                               userId: auth.user.id,
                               activeRole: auth.activeRole,
                               body: { komentar: nbComments[entry.id] ?? '' },
                             });
+                            if (!res.ok) {
+                              setFeedback({ type: 'err', text: res.error.message });
+                              return;
+                            }
                             setFeedback({ type: 'ok', text: 'Komentar buku tulis disimpan.' });
                             await onRefresh();
                           }}
